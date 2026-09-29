@@ -12,13 +12,14 @@
 # Notes:
 # 1) Binary Bayesian logistic regression estimates:
 #      Pr(R0 > cutoff or cases increase) = logit^{-1}(a + b1*x1 + ... + bp*xp)
-#    This is an empirical threshold equation.
+#    This is an empirical threshold equation. Predictors may be raw parameters or declared transformed feature terms.
 # 2) Successive binary logistic regression estimates ordered brackets:
 #      <1, 1-(1+step), ..., >10, with user-selected step size 0.25, 0.5, 1, 2, or 5
 # 3) For complex models, the app reports both analytic R0/Re where available and
 #    a numerical growth-rate R0estimate. REEBLRA estimates r from early major-host
 #    infection growth, reports R-squared and a 95% CI for r, uses r > 0 for
-#    positive R0 conversion, adaptively relaxes the susceptible threshold when too few
+#    positive R0 conversion (a screening approximation for structured/vector models),
+#    adaptively relaxes the susceptible threshold when too few
 #    early-window points are available, sets growth-based R0estimate < 1 to 0
 #    for non-growing/subthreshold runs, and then learns a surrogate/alternative
 #    symbolic closed-form threshold formula for R0 using logistic regression.
@@ -57,13 +58,13 @@ top_binary_terms_text <- function(bf, top_n = 10) {
   tab <- posterior_coef_table(bf$fit, z_predictors = bf$z_predictors)
   tab <- tab[tab$Term %in% bf$z_predictors, , drop = FALSE]
   if (nrow(tab) == 0) return("No predictor coefficients available.")
-  tab$Parameter <- sub("^z_", "", tab$Term)
+  tab$Feature_term <- sub("^z_", "", tab$Term)
   tab$AbsMean <- abs(tab$Mean)
   tab <- tab[order(tab$AbsMean, decreasing = TRUE), , drop = FALSE]
   tab <- utils::head(tab, top_n)
   paste0(
     apply(tab, 1, function(row) {
-      paste0("\t", row[["Parameter"]], " (standardized beta = ", round(as.numeric(row[["Mean"]]), 5), ")")
+      paste0("\t", row[["Feature_term"]], " (standardized beta = ", round(as.numeric(row[["Mean"]]), 5), ")")
     }),
     collapse = "\n"
   )
@@ -74,55 +75,29 @@ top_binary_terms_text <- function(bf, top_n = 10) {
 # =========================================================
 
 model_parameter_table <- function(model_name) {
-  # Default ranges are intentionally simple for teaching/demo runs.
-  # Most ODE rates/proportions are set to min = 0.01 and max = 1.
-  # Exception: m is a vector-to-human ratio, not a probability/rate, so values > 1 are appropriate.
+  # Demonstration defaults are positive and threshold-spanning so that both sides
+  # of R0/Re = 1 are represented during model training. Users can edit all bounds.
   switch(
     model_name,
-    "Closed SIR" = tibble::tribble(
-      ~parameter, ~min, ~max,
-      "beta", 0.01, 1.00,
-      "gamma", 0.01, 1.00
-    ),
-    "Open SIR" = tibble::tribble(
-      ~parameter, ~min, ~max,
-      "beta", 0.01, 1.00,
-      "gamma", 0.01, 1.00,
-      "mu", 0.01, 1.00
-    ),
-    "Open SEIR" = tibble::tribble(
-      ~parameter, ~min, ~max,
-      "beta", 0.01, 1.00,
-      "sigma", 0.01, 1.00,
-      "gamma", 0.01, 1.00,
-      "mu", 0.01, 1.00
-    ),
-    "SEIR with vaccination" = tibble::tribble(
-      ~parameter, ~min, ~max,
-      "beta", 0.01, 1.00,
-      "sigma", 0.01, 1.00,
-      "gamma", 0.01, 1.00,
-      "mu", 0.01, 1.00,
-      "v", 0.01, 1.00
-    ),
-    "Age-structured SIR" = tibble::tribble(
-      ~parameter, ~min, ~max,
-      "beta", 0.01, 1.00,
-      "gamma1", 0.01, 1.00,
-      "gamma2", 0.01, 1.00,
-      "c11", 0.01, 1.00,
-      "c12", 0.01, 1.00,
-      "c21", 0.01, 1.00,
-      "c22", 0.01, 1.00
-    ),
-    "Vector-borne" = tibble::tribble(
-      ~parameter, ~min, ~max,
-      "beta_hv", 0.01, 1.00,
-      "beta_vh", 0.01, 1.00,
-      "gamma_h", 0.01, 1.00,
-      "mu_v", 0.01, 1.00,
-      "m", 0.01, 10.00
-    )
+    "Closed SIR" = tibble::tribble(~parameter, ~min, ~max,
+      "beta", 0.05, 1.00, "gamma", 0.05, 1.00),
+    "Open SIR" = tibble::tribble(~parameter, ~min, ~max,
+      "beta", 0.05, 1.20, "gamma", 0.03, 0.60, "mu", 0.005, 0.25),
+    "Open SEIR" = tibble::tribble(~parameter, ~min, ~max,
+      "beta", 0.05, 1.50, "sigma", 0.05, 1.00, "gamma", 0.03, 0.60, "mu", 0.005, 0.20),
+    "SEIR with vaccination" = tibble::tribble(~parameter, ~min, ~max,
+      "beta", 0.10, 4.00, "sigma", 0.05, 1.00, "gamma", 0.03, 0.60,
+      "mu", 0.01, 0.30, "v", 0.001, 0.15),
+    "Age-structured SIR" = tibble::tribble(~parameter, ~min, ~max,
+      "beta", 0.03, 0.80, "gamma1", 0.05, 0.50, "gamma2", 0.05, 0.50,
+      "c11", 0.10, 1.50, "c12", 0.05, 1.00, "c21", 0.05, 1.00, "c22", 0.10, 1.50),
+    "15-compartment five-group SIR" = tibble::tribble(~parameter, ~min, ~max,
+      "beta", 0.005, 0.30,
+      "gamma1", 0.05, 0.50, "gamma2", 0.05, 0.50, "gamma3", 0.05, 0.50,
+      "gamma4", 0.05, 0.50, "gamma5", 0.05, 0.50),
+    "Vector-borne" = tibble::tribble(~parameter, ~min, ~max,
+      "beta_hv", 0.05, 1.50, "beta_vh", 0.05, 1.50, "gamma_h", 0.05, 0.60,
+      "mu_v", 0.05, 0.60, "m", 0.50, 6.00)
   )
 }
 
@@ -134,7 +109,10 @@ parameter_definition_table <- function(model_name) {
     sigma = "Progression rate from exposed to infectious; 1/sigma is the mean latent period.",
     v = "Vaccination rate or vaccination pressure applied to susceptible individuals.",
     gamma1 = "Recovery rate of infectious individuals in age group 1.",
-    gamma2 = "Recovery rate of infectious individuals in age group 2.",
+    gamma2 = "Recovery rate of infectious individuals in age/group 2.",
+    gamma3 = "Recovery rate of infectious individuals in group 3 of the 15-compartment model.",
+    gamma4 = "Recovery rate of infectious individuals in group 4 of the 15-compartment model.",
+    gamma5 = "Recovery rate of infectious individuals in group 5 of the 15-compartment model.",
     c11 = "Within-group contact coefficient: contacts from group 1 infectives to group 1 susceptibles.",
     c12 = "Cross-group contact coefficient: contacts from group 2 infectives to group 1 susceptibles.",
     c21 = "Cross-group contact coefficient: contacts from group 1 infectives to group 2 susceptibles.",
@@ -156,16 +134,22 @@ parameter_definition_table <- function(model_name) {
 default_initial_state <- function(model_name, I0 = 0.01) {
   switch(
     model_name,
-    "Closed SIR" = c(S = 1 - I0, I = I0, R = 0, C = I0, inc = 0),
-    "Open SIR" = c(S = 1 - I0, I = I0, R = 0, C = I0, inc = 0),
-    "Open SEIR" = c(S = 1 - I0, E = 0, I = I0, R = 0, C = I0, inc = 0),
-    "SEIR with vaccination" = c(S = 1 - I0, V = 0, E = 0, I = I0, R = 0, C = I0, inc = 0),
+    "Closed SIR" = c(S = 1 - I0, I = I0, R = 0, C = I0),
+    "Open SIR" = c(S = 1 - I0, I = I0, R = 0, C = I0),
+    "Open SEIR" = c(S = 1 - I0, E = 0, I = I0, R = 0, C = I0),
+    "SEIR with vaccination" = c(S = 1 - I0, V = 0, E = 0, I = I0, R = 0, C = I0),
     "Age-structured SIR" = c(S1 = 0.50 - I0/2, I1 = I0/2, R1 = 0,
                              S2 = 0.50 - I0/2, I2 = I0/2, R2 = 0,
-                             C = I0, inc = 0),
+                             C = I0),
+    "15-compartment five-group SIR" = c(
+      S1 = 0.20 - I0/5, I1 = I0/5, R1 = 0,
+      S2 = 0.20 - I0/5, I2 = I0/5, R2 = 0,
+      S3 = 0.20 - I0/5, I3 = I0/5, R3 = 0,
+      S4 = 0.20 - I0/5, I4 = I0/5, R4 = 0,
+      S5 = 0.20 - I0/5, I5 = I0/5, R5 = 0, C = I0),
     "Vector-borne" = c(Sh = 1 - I0, Ih = I0, Rh = 0,
                        Sv = 1, Iv = 0,
-                       Ch = I0, Cv = 0, inc_h = 0, inc_v = 0)
+                       Ch = I0, Cv = 0)
   )
 }
 
@@ -177,7 +161,7 @@ ode_closed_sir <- function(time, state, parameters) {
     dI <- incidence - gamma * I
     dR <- gamma * I
     dC <- incidence
-    list(c(dS, dI, dR, dC, incidence))
+    list(c(dS, dI, dR, dC))
   })
 }
 
@@ -190,7 +174,7 @@ ode_open_sir <- function(time, state, parameters) {
     dI <- incidence - gamma * I - mu * I
     dR <- gamma * I - mu * R
     dC <- incidence
-    list(c(dS, dI, dR, dC, incidence))
+    list(c(dS, dI, dR, dC))
   })
 }
 
@@ -204,7 +188,7 @@ ode_open_seir <- function(time, state, parameters) {
     dI <- sigma * E - gamma * I - mu * I
     dR <- gamma * I - mu * R
     dC <- incidence
-    list(c(dS, dE, dI, dR, dC, incidence))
+    list(c(dS, dE, dI, dR, dC))
   })
 }
 
@@ -219,7 +203,7 @@ ode_seir_vaccination <- function(time, state, parameters) {
     dI <- sigma * E - gamma * I - mu * I
     dR <- gamma * I - mu * R
     dC <- incidence
-    list(c(dS, dV, dE, dI, dR, dC, incidence))
+    list(c(dS, dV, dE, dI, dR, dC))
   })
 }
 
@@ -238,8 +222,32 @@ ode_age_sir <- function(time, state, parameters) {
     dI2 <- inc2 - gamma2 * I2
     dR2 <- gamma2 * I2
     dC <- inc1 + inc2
-    list(c(dS1, dI1, dR1, dS2, dI2, dR2, dC, inc1 + inc2))
+    list(c(dS1, dI1, dR1, dS2, dI2, dR2, dC))
   })
+}
+
+five_group_contact_matrix <- function() {
+  matrix(c(
+    3.0,1.2,0.6,0.3,0.2,
+    1.0,3.2,1.1,0.5,0.3,
+    0.5,1.0,2.8,1.0,0.5,
+    0.3,0.5,1.0,2.6,0.9,
+    0.2,0.3,0.5,0.9,2.4
+  ), nrow = 5, byrow = TRUE)
+}
+
+ode_five_group_sir <- function(time, state, parameters) {
+  Cmat <- five_group_contact_matrix()
+  S <- c(state[["S1"]],state[["S2"]],state[["S3"]],state[["S4"]],state[["S5"]])
+  I <- c(state[["I1"]],state[["I2"]],state[["I3"]],state[["I4"]],state[["I5"]])
+  R <- c(state[["R1"]],state[["R2"]],state[["R3"]],state[["R4"]],state[["R5"]])
+  N <- pmax(S + I + R, 1e-12)
+  gamma <- c(parameters[["gamma1"]],parameters[["gamma2"]],parameters[["gamma3"]],parameters[["gamma4"]],parameters[["gamma5"]])
+  lambda <- as.numeric(parameters[["beta"]] * Cmat %*% (I/N))
+  incidence <- lambda*S
+  dS <- -incidence; dI <- incidence-gamma*I; dR <- gamma*I
+  deriv <- as.vector(rbind(dS,dI,dR))
+  list(c(deriv, sum(incidence)))
 }
 
 ode_vector_borne <- function(time, state, parameters) {
@@ -255,7 +263,7 @@ ode_vector_borne <- function(time, state, parameters) {
     dIv <- inc_v - mu_v * Iv
     dCh <- inc_h
     dCv <- inc_v
-    list(c(dSh, dIh, dRh, dSv, dIv, dCh, dCv, inc_h, inc_v))
+    list(c(dSh, dIh, dRh, dSv, dIv, dCh, dCv))
   })
 }
 
@@ -267,6 +275,7 @@ get_ode_function <- function(model_name) {
     "Open SEIR" = ode_open_seir,
     "SEIR with vaccination" = ode_seir_vaccination,
     "Age-structured SIR" = ode_age_sir,
+    "15-compartment five-group SIR" = ode_five_group_sir,
     "Vector-borne" = ode_vector_borne
   )
 }
@@ -296,6 +305,12 @@ analytic_r0 <- function(model_name, par) {
       ), nrow = 2, byrow = TRUE)
       max(Re(eigen(K)$values))
     }),
+    "15-compartment five-group SIR" = with(par, {
+      Cmat <- five_group_contact_matrix()
+      gam <- c(gamma1,gamma2,gamma3,gamma4,gamma5)
+      K <- beta * sweep(Cmat, 2, gam, "/")
+      max(Re(eigen(K)$values))
+    }),
     "Vector-borne" = with(par, {
       sqrt((beta_hv * beta_vh * m) / (gamma_h * mu_v))
     })
@@ -310,6 +325,7 @@ r0_formula_text <- function(model_name) {
     "Open SEIR" = "Analytic R0 = beta*sigma / ((sigma + mu)*(gamma + mu))",
     "SEIR with vaccination" = "Effective R under continuous vaccination = (mu/(mu + v))*beta*sigma / ((sigma + mu)*(gamma + mu)); basic R0 without vaccination excludes the susceptible-fraction multiplier.",
     "Age-structured SIR" = "Analytic R0 = spectral radius of K, where K_ij = beta*c_ij/gamma_j, assuming the two groups are equally sized and fully susceptible at the disease-free state.",
+    "15-compartment five-group SIR" = "Analytic R0 = spectral radius of K with K_ij = beta*C_ij/gamma_j for the fixed 5x5 mixing matrix shown in the manuscript; the epidemiological state space has 15 compartments (S_i,I_i,R_i for i=1,...,5).",
     "Vector-borne" = "Analytic R0 = sqrt(beta_hv*beta_vh*m/(gamma_h*mu_v)); geometric mean of human-to-vector and vector-to-human transmission."
   )
 }
@@ -375,6 +391,16 @@ ode_equation_text <- function(model_name) {
       "Analytic R0 = spectral radius of K, where K_ij = beta*c_ij/gamma_j, assuming equally sized fully susceptible groups",
       sep = "\n"
     ),
+    "15-compartment five-group SIR" = paste(
+      "15-compartment five-group SIR model (i = 1,...,5):",
+      "lambda_i = beta * sum_j C_ij * I_j/N_j",
+      "dS_i/dt = -lambda_i*S_i",
+      "dI_i/dt = lambda_i*S_i - gamma_i*I_i",
+      "dR_i/dt = gamma_i*I_i",
+      "Fixed C rows: [3,1.2,0.6,0.3,0.2]; [1,3.2,1.1,0.5,0.3]; [0.5,1,2.8,1,0.5]; [0.3,0.5,1,2.6,0.9]; [0.2,0.3,0.5,0.9,2.4]",
+      "Analytic R0 = spectral radius of K, K_ij = beta*C_ij/gamma_j",
+      sep = "\n"
+    ),
     "Vector-borne" = paste(
       "Vector-borne model:",
       "dSh/dt = - beta_vh*m*Sh*Iv",
@@ -398,6 +424,7 @@ infectious_column <- function(model_name) {
     "Open SEIR" = "I",
     "SEIR with vaccination" = "I",
     "Age-structured SIR" = "Itotal",
+    "15-compartment five-group SIR" = "Itotal",
     "Vector-borne" = "Ih"
   )
 }
@@ -411,6 +438,7 @@ susceptible_column <- function(model_name) {
     "Open SEIR" = "S",
     "SEIR with vaccination" = "S",
     "Age-structured SIR" = "Stotal",
+    "15-compartment five-group SIR" = "Stotal",
     "Vector-borne" = "Sh"
   )
 }
@@ -420,6 +448,10 @@ prepare_sim_output <- function(model_name, sim) {
   if (model_name == "Age-structured SIR") {
     sim$Itotal <- sim$I1 + sim$I2
     sim$Stotal <- sim$S1 + sim$S2
+  }
+  if (model_name == "15-compartment five-group SIR") {
+    sim$Itotal <- sim$I1 + sim$I2 + sim$I3 + sim$I4 + sim$I5
+    sim$Stotal <- sim$S1 + sim$S2 + sim$S3 + sim$S4 + sim$S5
   }
   sim
 }
@@ -433,6 +465,7 @@ average_removal_rate <- function(model_name, par) {
     "Open SEIR" = par$gamma + par$mu,
     "SEIR with vaccination" = par$gamma + par$mu,
     "Age-structured SIR" = mean(c(par$gamma1, par$gamma2), na.rm = TRUE),
+    "15-compartment five-group SIR" = mean(c(par$gamma1,par$gamma2,par$gamma3,par$gamma4,par$gamma5), na.rm = TRUE),
     "Vector-borne" = par$gamma_h
   )
 }
@@ -446,6 +479,7 @@ average_latency_rate <- function(model_name, par) {
     "Open SEIR" = par$sigma + par$mu,
     "SEIR with vaccination" = par$sigma + par$mu,
     "Age-structured SIR" = NA_real_,
+    "15-compartment five-group SIR" = NA_real_,
     "Vector-borne" = NA_real_
   )
 }
@@ -598,6 +632,12 @@ growth_rate_r0 <- function(model_name, sim, par, I0, susceptible_threshold = 0.9
   if (is.finite(r2) && r2 < 0.80) {
     warning_msg <- c(warning_msg, "Low R-squared for early log-linear fit; inspect fitting window.")
   }
+  if (model_name %in% c("Age-structured SIR", "15-compartment five-group SIR", "Vector-borne")) {
+    warning_msg <- c(
+      warning_msg,
+      "For structured or vector-borne systems, the scalar early-growth conversion is a screening approximation, not an exact next-generation-matrix R0. Prefer analytic/spectral-radius R0 when available."
+    )
+  }
 
   r0_est <- NA_real_
   if (is.finite(r_hat) && r_hat <= 0) {
@@ -674,6 +714,26 @@ latin_hypercube_samples <- function(param_table, n) {
 
 simulate_one <- function(model_name, par_row, times, I0, growth_epsilon, susceptible_threshold = 0.95) {
   state <- default_initial_state(model_name, I0 = I0)
+
+  # For the vaccination model, analytic_r0() returns the control/effective
+  # reproduction number at the vaccination disease-free equilibrium (DFE), where
+  # S*/N = mu/(mu+v) and V*/N = v/(mu+v). Seed infection while preserving this
+  # DFE S:V ratio so that the early-growth comparison and analytic threshold refer
+  # to the same background vaccination state.
+  if (identical(model_name, "SEIR with vaccination")) {
+    mu0 <- as.numeric(par_row[["mu"]])
+    v0 <- as.numeric(par_row[["v"]])
+    if (is.finite(mu0) && is.finite(v0) && mu0 >= 0 && v0 >= 0 && (mu0 + v0) > 0) {
+      remaining <- max(0, 1 - I0)
+      state[["S"]] <- remaining * mu0 / (mu0 + v0)
+      state[["V"]] <- remaining * v0 / (mu0 + v0)
+      state[["E"]] <- 0
+      state[["I"]] <- I0
+      state[["R"]] <- 0
+      state[["C"]] <- I0
+    }
+  }
+
   ode_fun <- get_ode_function(model_name)
   sim <- ode(
     y = state,
@@ -755,6 +815,36 @@ simulate_many <- function(model_name, param_table, n, tmax, dt, I0, growth_epsil
 # MODEL FITTING HELPERS
 # =========================================================
 
+resolve_feature_basis <- function(feature_basis = "auto", model_name = NULL) {
+  if (is.null(feature_basis) || is.na(feature_basis) || feature_basis == "auto") {
+    if (!is.null(model_name) && model_name %in% c("Open SEIR", "SEIR with vaccination", "Age-structured SIR", "15-compartment five-group SIR", "Vector-borne")) return("log_cubic_compact")
+    return("linear")
+  }
+  feature_basis
+}
+
+feature_transform_df <- function(df, predictors, feature_basis = "linear") {
+  feature_basis <- resolve_feature_basis(feature_basis)
+  if (feature_basis == "linear") return(list(data=df, feature_predictors=predictors))
+  if (any(!is.finite(as.matrix(df[predictors]))) || any(as.matrix(df[predictors]) <= 0, na.rm=TRUE)) {
+    stop("Log-based feature bases require all selected predictors to be finite and strictly positive. Use the linear basis or revise predictor values/ranges.")
+  }
+  out <- df
+  logs <- lapply(predictors, function(p) log(as.numeric(df[[p]]))); names(logs) <- predictors
+  f <- character(0)
+  for (p in predictors) { nm <- paste0("log__",p); out[[nm]] <- logs[[p]]; f <- c(f,nm) }
+  if (feature_basis %in% c("log_quadratic","log_cubic_compact")) {
+    for (p in predictors) { nm <- paste0("log2__",p); out[[nm]] <- logs[[p]]^2; f <- c(f,nm) }
+    if (length(predictors) >= 2) for (i in seq_len(length(predictors)-1)) for (j in (i+1):length(predictors)) {
+      nm <- paste0("logx__",predictors[i],"__",predictors[j]); out[[nm]] <- logs[[predictors[i]]] * logs[[predictors[j]]]; f <- c(f,nm)
+    }
+  }
+  if (feature_basis == "log_cubic_compact") {
+    for (p in predictors) { nm <- paste0("log3__",p); out[[nm]] <- logs[[p]]^3; f <- c(f,nm) }
+  }
+  list(data=out, feature_predictors=f)
+}
+
 standardize_predictors <- function(df, predictors) {
   centers <- sapply(df[predictors], mean, na.rm = TRUE)
   scales <- sapply(df[predictors], sd, na.rm = TRUE)
@@ -771,20 +861,30 @@ binary_metrics <- function(y_true, prob, cutoff = 0.5, validation_label = "Appar
   pred <- ifelse(prob >= cutoff, 1, 0)
   out <- tibble::tibble(
     Validation = validation_label,
-    Metric = c("Accuracy", "AUC", "Sensitivity", "Specificity", "Precision", "MSE"),
+    Metric = c("Accuracy", "Balanced accuracy", "AUC", "Sensitivity", "Specificity", "Precision", "Recall", "F1 score", "NPV", "Cohen kappa", "Brier score (MSE)"),
     Value = NA_real_
   )
   out$Value[out$Metric == "Accuracy"] <- mean(pred == y_true, na.rm = TRUE)
-  out$Value[out$Metric == "MSE"] <- mean((prob - y_true)^2, na.rm = TRUE)
+  out$Value[out$Metric == "Brier score (MSE)"] <- mean((prob - y_true)^2, na.rm = TRUE)
   out$Value[out$Metric == "AUC"] <- tryCatch(as.numeric(pROC::auc(pROC::roc(y_true, prob, quiet = TRUE))), error = function(e) NA_real_)
 
   cm <- tryCatch(caret::confusionMatrix(factor(pred, levels = c(0, 1)),
                                         factor(y_true, levels = c(0, 1)),
                                         positive = "1"), error = function(e) NULL)
   if (!is.null(cm)) {
-    out$Value[out$Metric == "Sensitivity"] <- unname(cm$byClass["Sensitivity"])
-    out$Value[out$Metric == "Specificity"] <- unname(cm$byClass["Specificity"])
-    out$Value[out$Metric == "Precision"] <- unname(cm$byClass["Pos Pred Value"])
+    sens <- unname(cm$byClass["Sensitivity"])
+    spec <- unname(cm$byClass["Specificity"])
+    prec <- unname(cm$byClass["Pos Pred Value"])
+    npv <- unname(cm$byClass["Neg Pred Value"])
+    f1 <- if (is.finite(prec) && is.finite(sens) && (prec + sens) > 0) 2 * prec * sens / (prec + sens) else NA_real_
+    out$Value[out$Metric == "Sensitivity"] <- sens
+    out$Value[out$Metric == "Specificity"] <- spec
+    out$Value[out$Metric == "Precision"] <- prec
+    out$Value[out$Metric == "Recall"] <- sens
+    out$Value[out$Metric == "F1 score"] <- f1
+    out$Value[out$Metric == "NPV"] <- npv
+    out$Value[out$Metric == "Balanced accuracy"] <- mean(c(sens, spec), na.rm = TRUE)
+    out$Value[out$Metric == "Cohen kappa"] <- unname(cm$overall["Kappa"])
   }
   out
 }
@@ -948,7 +1048,7 @@ posterior_equation <- function(fit, centers = NULL, scales = NULL, z_predictors 
 
   rhs_z <- build_rhs(intercept_z, betas_z)
 
-  # Convert from standardized predictors back to original ODE parameters:
+  # Convert from standardized fitted feature terms back to their unstandardized feature scale:
   # z_x = (x - mean_x)/sd_x. Therefore,
   # eta = a_z + sum b_z*z_x = a_original + sum b_original*x.
   rhs_original <- NA_character_
@@ -969,9 +1069,9 @@ posterior_equation <- function(fit, centers = NULL, scales = NULL, z_predictors 
     logit_standardized = paste0("logit(p) = ", rhs_z),
     probability_standardized = paste0("p = 1 / (1 + exp(-(", rhs_z, ")))"),
     threshold_standardized = paste0("Estimated threshold score: eta = ", rhs_z, "; classify as threshold TRUE when eta > 0 or p > 0.5."),
-    logit_original = ifelse(is.na(rhs_original), "Original-scale equation unavailable; check coefficient extraction.", paste0("logit(p) = ", rhs_original)),
-    probability_original = ifelse(is.na(rhs_original), "Original-scale probability equation unavailable; check coefficient extraction.", paste0("p = 1 / (1 + exp(-(", rhs_original, ")))")),
-    threshold_original = ifelse(is.na(rhs_original), "Original-scale threshold equation unavailable; check coefficient extraction.", paste0("Estimated R0-threshold score on original parameter scale: eta = ", rhs_original, "; classify as threshold TRUE when eta > 0 or p > 0.5."))
+    logit_original = ifelse(is.na(rhs_original), "Unstandardized feature-scale equation unavailable; check coefficient extraction.", paste0("logit(p) = ", rhs_original)),
+    probability_original = ifelse(is.na(rhs_original), "Unstandardized feature-scale probability equation unavailable; check coefficient extraction.", paste0("p = 1 / (1 + exp(-(", rhs_original, ")))")),
+    threshold_original = ifelse(is.na(rhs_original), "Unstandardized feature-scale threshold equation unavailable; check coefficient extraction.", paste0("Estimated R0-threshold score on the unstandardized fitted-feature scale: eta = ", rhs_original, "; classify as threshold TRUE when eta > 0 or p > 0.5."))
   )
 }
 
@@ -1021,18 +1121,18 @@ ordinary_logistic_equation <- function(fit, centers = NULL, scales = NULL, z_pre
     probability_standardized = paste0("p = 1 / (1 + exp(-(", rhs_z, ")))") ,
     eta_original = ifelse(
       is.na(rhs_original),
-      "Original-scale eta equation unavailable; check coefficient extraction.",
+      "Unstandardized feature-scale eta equation unavailable; check coefficient extraction.",
       paste0("eta = ", rhs_original)
     ),
     probability_original = ifelse(
       is.na(rhs_original),
-      "Original-scale probability equation unavailable; check coefficient extraction.",
+      "Unstandardized feature-scale probability equation unavailable; check coefficient extraction.",
       paste0("p = 1 / (1 + exp(-(", rhs_original, ")))")
     )
   )
 }
 
-fit_binary_bayes <- function(df, predictors, outcome, chains, iter, seed, algorithm = "meanfield", k_folds = 2) {
+fit_binary_bayes <- function(df, predictors, outcome, chains, iter, seed, algorithm = "meanfield", k_folds = 2, feature_basis = "linear") {
   if (!safe_require("rstanarm")) {
     stop("Package 'rstanarm' is required for binary Bayesian logistic regression. Install it first with install.packages('rstanarm').")
   }
@@ -1059,8 +1159,12 @@ fit_binary_bayes <- function(df, predictors, outcome, chains, iter, seed, algori
   if (is.na(k_folds) || k_folds < 1) k_folds <- 1
   k_folds <- min(k_folds, nrow(d_full))
 
-  # Final model for the reported equation: fit on all available complete data.
-  scaled <- standardize_predictors(d_full, predictors)
+  raw_centers <- sapply(d_full[predictors], mean, na.rm = TRUE)
+  # Final model: transform predictors first, then standardize the feature terms.
+  transformed <- feature_transform_df(d_full, predictors, feature_basis)
+  d_full <- transformed$data
+  feature_predictors <- transformed$feature_predictors
+  scaled <- standardize_predictors(d_full, feature_predictors)
   d2 <- scaled$data
   zpred <- scaled$z_predictors
   form <- as.formula(paste(outcome, "~", paste(zpred, collapse = " + ")))
@@ -1107,9 +1211,11 @@ fit_binary_bayes <- function(df, predictors, outcome, chains, iter, seed, algori
 
       train_raw <- d_full[train_idx, , drop = FALSE]
       test_raw <- d_full[test_idx, , drop = FALSE]
-      train_scaled <- standardize_predictors(train_raw, predictors)
+      trf <- feature_transform_df(train_raw, predictors, feature_basis)
+      tef <- feature_transform_df(test_raw, predictors, feature_basis)
+      train_scaled <- standardize_predictors(trf$data, trf$feature_predictors)
       train_d <- train_scaled$data
-      test_d <- standardize_newdata(test_raw, train_scaled$centers, train_scaled$scales, predictors)
+      test_d <- standardize_newdata(tef$data, train_scaled$centers, train_scaled$scales, trf$feature_predictors)
       fold_form <- as.formula(paste(outcome, "~", paste(train_scaled$z_predictors, collapse = " + ")))
 
       fold_fit <- fit_stan_glm_binary(
@@ -1151,6 +1257,9 @@ fit_binary_bayes <- function(df, predictors, outcome, chains, iter, seed, algori
     ordinary_equation = ordinary_equation,
     data = d2,
     predictors = predictors,
+    feature_predictors = feature_predictors,
+    feature_basis = feature_basis,
+    raw_centers = raw_centers,
     z_predictors = zpred,
     centers = scaled$centers,
     scales = scaled$scales,
@@ -1168,7 +1277,7 @@ fit_binary_bayes <- function(df, predictors, outcome, chains, iter, seed, algori
 
 
 
-fit_multiclass_model <- function(df, predictors, outcome_class, use_bayes = FALSE, chains = NULL, iter = NULL, seed = NULL, bracket_step = 0.25, k_folds = 1) {
+fit_multiclass_model <- function(df, predictors, outcome_class, use_bayes = FALSE, chains = NULL, iter = NULL, seed = NULL, bracket_step = 0.25, k_folds = 1, feature_basis = "linear") {
   # Successive binary logistic R0 bracket estimation.
   #
   # Instead of fitting one multinomial model in a single step, this approach
@@ -1253,7 +1362,9 @@ fit_multiclass_model <- function(df, predictors, outcome_class, use_bayes = FALS
   )
 
   fit_successive <- function(train_raw) {
-    scaled <- standardize_predictors(train_raw, predictors)
+    transformed <- feature_transform_df(train_raw, predictors, feature_basis)
+    feature_predictors <- transformed$feature_predictors
+    scaled <- standardize_predictors(transformed$data, feature_predictors)
     d2 <- scaled$data
     zpred <- scaled$z_predictors
     fits <- list()
@@ -1281,6 +1392,8 @@ fit_multiclass_model <- function(df, predictors, outcome_class, use_bayes = FALS
       fit = fits,
       data = d2,
       predictors = predictors,
+      feature_predictors = feature_predictors,
+      feature_basis = feature_basis,
       z_predictors = zpred,
       centers = scaled$centers,
       scales = scaled$scales,
@@ -1291,6 +1404,7 @@ fit_multiclass_model <- function(df, predictors, outcome_class, use_bayes = FALS
     )
   }
 
+  raw_centers <- sapply(d[predictors], mean, na.rm = TRUE)
   final <- fit_successive(d)
   prob_mat <- successive_probabilities_from_fits(final$fit, final$data, thresholds, labels, threshold_defaults = final$threshold_defaults)
   pred_class <- colnames(prob_mat)[max.col(prob_mat, ties.method = "first")]
@@ -1311,7 +1425,8 @@ fit_multiclass_model <- function(df, predictors, outcome_class, use_bayes = FALS
       test_raw <- d[test_idx, , drop = FALSE]
       fold_fit <- tryCatch(fit_successive(train_raw), error = function(e) NULL)
       if (is.null(fold_fit)) next
-      test_z <- standardize_newdata(test_raw, fold_fit$centers, fold_fit$scales, predictors)
+      test_tf <- feature_transform_df(test_raw, predictors, feature_basis)
+      test_z <- standardize_newdata(test_tf$data, fold_fit$centers, fold_fit$scales, fold_fit$feature_predictors)
       fold_prob <- successive_probabilities_from_fits(fold_fit$fit, test_z, thresholds, labels, threshold_defaults = fold_fit$threshold_defaults)
       fold_pred <- colnames(fold_prob)[max.col(fold_prob, ties.method = "first")]
       fold_obs <- make_r0_brackets(test_raw$R0_for_successive, step = bracket_step)
@@ -1335,6 +1450,9 @@ fit_multiclass_model <- function(df, predictors, outcome_class, use_bayes = FALS
     fit = final$fit,
     data = final$data,
     predictors = predictors,
+    feature_predictors = final$feature_predictors,
+    feature_basis = feature_basis,
+    raw_centers = raw_centers,
     z_predictors = final$z_predictors,
     centers = final$centers,
     scales = final$scales,
@@ -1506,12 +1624,12 @@ multiclass_equation_text <- function(mf) {
     )
   }
 
-  lines <- c(lines, "", "Equations on original ODE/uploaded parameter scale:")
+  lines <- c(lines, "", "Equations on unstandardized fitted-feature scale (this equals the original parameter scale only for the linear basis):")
 
   for (thr in threshold_names) {
     fit_thr <- mf$fit[[thr]]
     if (is.null(fit_thr)) {
-      lines <- c(lines, unavailable_line(thr, "original parameter"))
+      lines <- c(lines, unavailable_line(thr, "unstandardized fitted-feature"))
       next
     }
     co <- stats::coef(fit_thr)
@@ -1534,7 +1652,7 @@ multiclass_equation_text <- function(mf) {
         lines,
         paste0(
           "eta_R0_gt_", format_bracket_number(thr),
-          " = original-scale equation unavailable; check coefficient extraction."
+          " = unstandardized feature-scale equation unavailable; check coefficient extraction."
         )
       )
     }
@@ -1554,7 +1672,7 @@ latex_escape <- function(x) {
   x <- gsub("([#$%&_{}])", "\\\\\\1", x, perl = TRUE)
   x <- gsub("\\^", "\\\\textasciicircum{}", x, perl = TRUE)
   x <- gsub("~", "\\\\textasciitilde{}", x, fixed = TRUE)
-  x <- gsub("<", "\\\\textless{}", x, fixed = TRUE)
+  x <- gsub("<", "$<$", x, fixed = TRUE)
   x <- gsub(">", "$>$", x, fixed = TRUE)
   x <- gsub("<<BACKSLASH>>", "\\\\textbackslash{}", x, fixed = TRUE)
   x
@@ -1762,12 +1880,12 @@ binary_latex_document <- function(bf, model_name = "REEBLRA model", data_mode = 
     "\\begin{equation}",
     "p_z = \\frac{1}{1+\\exp(-\\eta_z)}.",
     "\\end{equation}",
-    "\\section*{Equation on original parameter scale}"
+    if (identical(bf$feature_basis, "linear")) "\\section*{Equation on original parameter scale}" else "\\section*{Equation on unstandardized fitted-feature scale}"
   )
 
   if (isTRUE(original_available)) {
     body <- c(body,
-      "After substituting \\(z_j=(x_j-\\bar{x}_j)/s_j\\), the equation on the original parameter scale is",
+      if (identical(bf$feature_basis, "linear")) "After substituting \\(z_j=(x_j-\\bar{x}_j)/s_j\\), the equation is on the original parameter scale." else "After undoing standardization, the equation remains on the declared transformed-feature scale. Terms such as \\texttt{log\\_\\_}, \\texttt{log2\\_\\_}, \\texttt{log3\\_\\_}, and \\texttt{logx\\_\\_} are transformed features; raw parameters can be entered through the app trial tool, which applies the same feature map automatically.",
       "\\begin{equation}",
       "\\begin{gathered}",
       latex_aligned_equation_lines("\\eta_x", a_original, b_original, standardized = FALSE),
@@ -1779,7 +1897,7 @@ binary_latex_document <- function(bf, model_name = "REEBLRA model", data_mode = 
       "\\end{equation}"
     )
   } else {
-    body <- c(body, "The original-scale equation was unavailable because the fitted model did not contain the required scaling information.")
+    body <- c(body, "The unstandardized feature-scale equation was unavailable because the fitted model did not contain the required scaling information.")
   }
 
   body <- c(body,
@@ -2019,8 +2137,8 @@ multiclass_latex_document <- function(mf, model_name = "REEBLRA model", data_mod
     "\\small",
     standardized_eq_lines,
     "\\normalsize",
-    "\\section*{Original-scale fitted equations}",
-    "These equations substitute the scaling constants back into the model so that the original ODE or uploaded parameters can be entered directly.",
+    if (identical(mf$feature_basis, "linear")) "\\section*{Original-parameter-scale fitted equations}" else "\\section*{Unstandardized fitted-feature-scale equations}",
+    if (identical(mf$feature_basis, "linear")) "These equations undo standardization and are directly on the original ODE or uploaded parameter scale." else "These equations undo standardization but retain the declared transformed feature map. Raw ODE/uploaded parameters can be entered through the app trial tool, which applies the same feature map before evaluating the equations.",
     "\\small",
     original_eq_lines,
     "\\normalsize",
@@ -2034,7 +2152,7 @@ multiclass_latex_document <- function(mf, model_name = "REEBLRA model", data_mod
     "\\hline",
     "\\end{longtable}",
     "\\normalsize",
-    "\\section*{Original-scale coefficient table}",
+    if (identical(mf$feature_basis, "linear")) "\\section*{Original-parameter-scale coefficient table}" else "\\section*{Unstandardized fitted-feature coefficient table}",
     "\\small",
     "\\begin{longtable}{@{}p{0.28\\linewidth}p{0.34\\linewidth}r@{}}",
     "\\hline",
@@ -2045,7 +2163,7 @@ multiclass_latex_document <- function(mf, model_name = "REEBLRA model", data_mod
     "\\end{longtable}",
     "\\normalsize",
     "\\section*{Model performance summary}",
-    "The table reports overall and weighted summaries, plus observed support and one-vs-rest AUC where available. Full per-class sensitivity, specificity, and precision remain available in the CSV downloads.",
+    "The table reports overall accuracy, balanced accuracy, Cohen kappa, macro and weighted summaries, plus observed support, F1 score, and one-vs-rest AUC where available. Full per-class sensitivity, specificity, precision, recall, NPV, balanced accuracy, F1, and AUC remain available in the CSV downloads.",
     "\\small",
     "\\begin{longtable}{@{}p{0.30\\linewidth}p{0.25\\linewidth}p{0.22\\linewidth}rr@{}}",
     "\\hline",
@@ -2116,7 +2234,7 @@ multiclass_coef_table <- function(mf) {
 
 multiclass_coefficient_heatmap_data <- function(mf) {
   threshold_order <- as.character(mf$thresholds)
-  if (length(threshold_order) == 0 || length(mf$predictors) == 0) {
+  if (length(threshold_order) == 0 || length(mf$feature_predictors) == 0) {
     return(data.frame())
   }
 
@@ -2128,7 +2246,7 @@ multiclass_coefficient_heatmap_data <- function(mf) {
     n_le <- sum(r0_values <= as.numeric(thr), na.rm = TRUE)
 
     if (is.null(fit_thr)) {
-      estimates <- rep(NA_real_, length(mf$predictors))
+      estimates <- rep(NA_real_, length(mf$feature_predictors))
       status <- if (n_gt == 0) {
         "Not estimable: no observations above this threshold"
       } else if (n_le == 0) {
@@ -2138,7 +2256,7 @@ multiclass_coefficient_heatmap_data <- function(mf) {
       }
     } else {
       co <- stats::coef(fit_thr)
-      z_terms <- paste0("z_", mf$predictors)
+      z_terms <- paste0("z_", mf$feature_predictors)
       estimates <- as.numeric(co[z_terms])
       status <- "Fitted"
     }
@@ -2146,7 +2264,7 @@ multiclass_coefficient_heatmap_data <- function(mf) {
     data.frame(
       R0_level = paste0("R0 > ", format_bracket_number(thr)),
       Threshold = suppressWarnings(as.numeric(thr)),
-      Parameter = mf$predictors,
+      Parameter = mf$feature_predictors,
       Estimate = estimates,
       N_at_or_below = n_le,
       N_above = n_gt,
@@ -2184,25 +2302,28 @@ multiclass_coefficient_heatmap_data <- function(mf) {
 # DIAGNOSTICS, UPLOAD DATA, MULTICLASS METRICS, AND TRIAL HELPERS
 # =========================================================
 
-prepare_uploaded_r0_data <- function(file_path, r0_col = "R0estimate", max_params = 50, bracket_step = 0.25) {
-  df <- readr::read_csv(file_path, show_col_types = FALSE)
+prepare_uploaded_r0_dataframe <- function(df, r0_col = "R0estimate", max_params = 50, bracket_step = 0.25) {
+  df <- as.data.frame(df, check.names = FALSE)
   if (!r0_col %in% names(df)) {
     stop("Uploaded CSV must contain a column named R0estimate, or select the correct R0 column.")
   }
-  df <- as.data.frame(df)
-  df[[r0_col]] <- as.numeric(df[[r0_col]])
+
+  df[[r0_col]] <- suppressWarnings(as.numeric(df[[r0_col]]))
   candidate_predictors <- setdiff(names(df), r0_col)
-  numeric_predictors <- candidate_predictors[sapply(df[candidate_predictors], is.numeric)]
+  numeric_predictors <- candidate_predictors[vapply(df[candidate_predictors], is.numeric, logical(1))]
+
   if (length(numeric_predictors) < 1) {
     stop("Uploaded table must contain at least one numeric parameter column in addition to R0estimate.")
   }
   if (length(numeric_predictors) > max_params) {
     stop(paste0("Uploaded table has ", length(numeric_predictors), " numeric parameter columns. The suggested maximum is ", max_params, ". Please reduce parameters first."))
   }
+
   out <- df[, c(r0_col, numeric_predictors), drop = FALSE]
   names(out)[names(out) == r0_col] <- "R0estimate"
   out <- out[stats::complete.cases(out), , drop = FALSE]
   if (nrow(out) < 20) stop("Uploaded table has fewer than 20 complete rows after cleaning.")
+
   out$analytic_R0 <- NA_real_
   out$numeric_secondary_R0 <- out$R0estimate
   out$cases_increase <- as.integer(out$R0estimate > 1)
@@ -2211,6 +2332,16 @@ prepare_uploaded_r0_data <- function(file_path, r0_col = "R0estimate", max_param
   out$R0_bracket_analytic <- NA
   out$R0_bracket_numeric <- make_r0_brackets(out$R0estimate, step = bracket_step)
   out
+}
+
+prepare_uploaded_r0_data <- function(file_path, r0_col = "R0estimate", max_params = 50, bracket_step = 0.25) {
+  df <- readr::read_csv(file_path, show_col_types = FALSE)
+  prepare_uploaded_r0_dataframe(
+    df = df,
+    r0_col = r0_col,
+    max_params = max_params,
+    bracket_step = bracket_step
+  )
 }
 
 multiclass_metrics_core <- function(observed, predicted, probs, classes, validation_label = "Apparent / in-sample") {
@@ -2235,6 +2366,9 @@ multiclass_metrics_core <- function(observed, predicted, probs, classes, validat
     sens <- ifelse((TP + FN) > 0, TP / (TP + FN), NA_real_)
     spec <- ifelse((TN + FP) > 0, TN / (TN + FP), NA_real_)
     prec <- ifelse((TP + FP) > 0, TP / (TP + FP), NA_real_)
+    npv <- ifelse((TN + FN) > 0, TN / (TN + FN), NA_real_)
+    f1 <- ifelse(is.finite(prec) && is.finite(sens) && (prec + sens) > 0, 2 * prec * sens / (prec + sens), NA_real_)
+    bal <- ifelse(is.finite(sens) && is.finite(spec), mean(c(sens, spec)), NA_real_)
     auc <- NA_real_
     if (cls %in% names(probs) && length(unique(y_bin)) == 2) {
       auc <- tryCatch(as.numeric(pROC::auc(pROC::roc(y_bin, probs[[cls]], quiet = TRUE))), error = function(e) NA_real_)
@@ -2242,26 +2376,20 @@ multiclass_metrics_core <- function(observed, predicted, probs, classes, validat
     tibble::tibble(
       Validation = validation_label,
       Class = cls,
-      Metric = c("Sensitivity", "Specificity", "Precision", "One-vs-rest AUC"),
-      Value = c(sens, spec, prec, auc),
+      Metric = c("Sensitivity", "Specificity", "Precision", "Recall", "F1 score", "NPV", "Balanced accuracy (one-vs-rest)", "One-vs-rest AUC"),
+      Value = c(sens, spec, prec, sens, f1, npv, bal, auc),
       Support = as.numeric(support_tbl[[cls]])
     )
   })
 
   per_class <- dplyr::bind_rows(rows)
 
-  # Macro average = simple average across classes.
-  # This treats rare and common R0 brackets equally, so it is useful for checking
-  # whether the model performs reasonably across all brackets, including sparse ones.
   macro <- per_class %>%
     dplyr::group_by(Validation, Metric) %>%
     dplyr::summarise(Value = mean(Value, na.rm = TRUE), .groups = "drop") %>%
     dplyr::mutate(Class = "Macro average", Support = sum(support_df$Support, na.rm = TRUE)) %>%
     dplyr::select(Validation, Class, Metric, Value, Support)
 
-  # Weighted average = average across classes weighted by observed class frequency.
-  # This is often more stable when R0 brackets are imbalanced, but it can be dominated
-  # by common brackets. Report it together with macro average and per-class metrics.
   weighted <- per_class %>%
     dplyr::group_by(Validation, Metric) %>%
     dplyr::summarise(
@@ -2275,12 +2403,33 @@ multiclass_metrics_core <- function(observed, predicted, probs, classes, validat
     dplyr::mutate(Class = "Weighted average") %>%
     dplyr::select(Validation, Class, Metric, Value, Support)
 
+  overall_balanced <- per_class %>%
+    dplyr::filter(Metric == "Sensitivity") %>%
+    dplyr::summarise(Value = mean(Value, na.rm = TRUE)) %>%
+    dplyr::pull(Value)
+
+  cm_tab <- table(observed, predicted)
+  n_total <- sum(cm_tab)
+  po <- if (n_total > 0) sum(diag(cm_tab)) / n_total else NA_real_
+  row_marg <- rowSums(cm_tab)
+  col_marg <- colSums(cm_tab)
+  pe <- if (n_total > 0) sum(row_marg * col_marg) / (n_total^2) else NA_real_
+  kappa <- if (is.finite(pe) && pe < 1) (po - pe) / (1 - pe) else NA_real_
+
   support_rows <- support_df %>%
     dplyr::mutate(Validation = validation_label, Metric = "Observed support", Value = Support) %>%
     dplyr::select(Validation, Class, Metric, Value, Support)
 
+  overall <- tibble::tibble(
+    Validation = validation_label,
+    Class = "Overall",
+    Metric = c("Accuracy", "Balanced accuracy", "Cohen kappa"),
+    Value = c(accuracy, overall_balanced, kappa),
+    Support = sum(support_df$Support, na.rm = TRUE)
+  )
+
   dplyr::bind_rows(
-    tibble::tibble(Validation = validation_label, Class = "Overall", Metric = "Accuracy", Value = accuracy, Support = sum(support_df$Support, na.rm = TRUE)),
+    overall,
     macro,
     weighted,
     per_class,
@@ -2385,7 +2534,8 @@ standardize_newdata <- function(newd, centers, scales, predictors) {
 }
 
 predict_binary_trial <- function(bf, newd) {
-  znew <- standardize_newdata(newd, bf$centers, bf$scales, bf$predictors)
+  tf <- feature_transform_df(newd, bf$predictors, bf$feature_basis)
+  znew <- standardize_newdata(tf$data, bf$centers, bf$scales, bf$feature_predictors)
   prob <- posterior_epred_mean(bf$fit, znew)
   tibble::tibble(
     Predicted_probability_threshold_TRUE = as.numeric(prob),
@@ -2394,7 +2544,8 @@ predict_binary_trial <- function(bf, newd) {
 }
 
 predict_multiclass_trial <- function(mf, newd) {
-  znew <- standardize_newdata(newd, mf$centers, mf$scales, mf$predictors)
+  tf <- feature_transform_df(newd, mf$predictors, mf$feature_basis)
+  znew <- standardize_newdata(tf$data, mf$centers, mf$scales, mf$feature_predictors)
   successive_predict_class(mf, znew)
 }
 
@@ -2794,6 +2945,7 @@ plot_multiclass_auc_gg <- function(mf, validation_label = "Apparent / in-sample"
     ggplot2::geom_col() +
     ggplot2::geom_hline(yintercept = 0.5, linetype = "dashed") +
     ggplot2::coord_cartesian(ylim = c(0, 1)) +
+    ggplot2::scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 1), expand = c(0, 0)) +
     ggplot2::labs(title = paste0(validation_label, " one-vs-rest AUC per R0 bracket"), x = "R0 bracket", y = "One-vs-rest AUC") +
     ggplot2::theme_minimal() +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
@@ -2812,8 +2964,8 @@ plot_sensitivity_gg <- function(bf) {
     ggplot2::geom_vline(xintercept = 0, linetype = "dashed") +
     ggplot2::coord_cartesian(xlim = c(-1, 1)) +
     ggplot2::labs(
-      title = "Normalized Bayesian sensitivity coefficient",
-      x = "Median normalized Bayesian sensitivity coefficient with 95% credible interval",
+      title = "Normalized Bayesian feature-term sensitivity coefficient",
+      x = "Median normalized Bayesian feature-term coefficient with 95% credible interval",
       y = ""
     ) +
     ggplot2::theme_minimal()
@@ -2840,6 +2992,73 @@ csvgen_read_uploaded_table <- function(fileinfo) {
 
 csvgen_safe_numeric <- function(x) {
   suppressWarnings(as.numeric(x))
+}
+
+csvgen_schisto_template_data <- function(n_series = 50, times = seq(0, 30, by = 1)) {
+  # Synthetic, illustrative Schistosomiasis-related template only. Parameter names
+  # are epidemiologically motivated labels; values are not fitted to a real setting.
+  n_series <- as.integer(n_series)
+  if (!is.finite(n_series) || n_series < 1) n_series <- 50L
+  idx <- seq_len(n_series)
+  u <- function(multiplier, offset = 0) ((idx * multiplier + offset) %% 97) / 96
+
+  pars <- tibble::tibble(
+    beta_h = 0.10 + 0.45 * u(17, 3),
+    beta_s = 0.08 + 0.37 * u(29, 7),
+    gamma = 0.12 + 0.16 * u(41, 11),
+    sigma = 0.08 + 0.17 * u(53, 13),
+    mu_h = 0.00002 + 0.00006 * u(61, 17),
+    mu_s = 0.05 + 0.13 * u(67, 19),
+    snail_density = 0.50 + 1.50 * u(71, 23),
+    water_contact = 0.40 + 1.20 * u(73, 29),
+    cercarial_exposure = 0.50 + 1.30 * u(79, 31),
+    miracidial_shedding = 0.50 + 1.10 * u(83, 37),
+    snail_susceptibility = 0.50 + 1.00 * u(89, 41),
+    human_susceptibility = 0.60 + 0.80 * u(43, 47),
+    treatment_rate = 0.12 * u(31, 53),
+    praziquantel_effect = 0.60 + 0.38 * u(37, 59),
+    sanitation_coverage = 0.10 + 0.80 * u(47, 61),
+    safe_water_coverage = 0.10 + 0.80 * u(59, 67),
+    seasonal_amplitude = 0.30 * u(23, 71),
+    rainfall_index = 0.70 + 0.60 * u(19, 73),
+    temperature_index = 0.80 + 0.40 * u(13, 79),
+    migration_rate = 0.05 * u(11, 83)
+  )
+
+  # Hidden synthetic threshold driver used only to construct trajectories. It is
+  # intentionally NOT written to the parameter CSV, so the CSV Generator still
+  # estimates R0estimate from the time-series data as intended.
+  transmission_component <- sqrt(
+    (pars$beta_h / 0.28) * (pars$beta_s / 0.22) * pars$snail_density *
+      pars$water_contact * pars$cercarial_exposure * pars$miracidial_shedding *
+      pars$snail_susceptibility * pars$human_susceptibility *
+      pars$rainfall_index * pars$temperature_index /
+      ((pars$gamma / 0.20) * (pars$mu_s / 0.10))
+  )
+  control_component <-
+    (1 - 0.55 * pars$sanitation_coverage) *
+    (1 - 0.35 * pars$safe_water_coverage) *
+    (1 - 0.45 * (pars$treatment_rate / 0.12) * pars$praziquantel_effect)
+  synthetic_R0 <- 2.0 * transmission_component * control_component
+  growth_r <- pars$gamma * (synthetic_R0 - 1)
+  growth_r <- pmax(-0.18, pmin(0.45, growth_r))
+
+  times <- as.numeric(times)
+  series_list <- lapply(seq_len(n_series), function(i) {
+    I0 <- 5 + 0.25 * i + 0.5 * (1 + sin(1.7 * i))
+    carrying_capacity <- 50000 * (0.75 + 0.35 * pars$snail_density[i])
+    y <- carrying_capacity /
+      (1 + ((carrying_capacity - I0) / I0) * exp(-growth_r[i] * times))
+    seasonal_multiplier <- 1 + 0.03 * pars$seasonal_amplitude[i] *
+      sin(2 * pi * times / 12 + i / 7)
+    measurement_multiplier <- exp(0.012 * sin(0.73 * times + 0.37 * i))
+    pmax(y * seasonal_multiplier * measurement_multiplier, 1e-10)
+  })
+
+  ts <- as.data.frame(c(list(time = times), series_list), check.names = FALSE)
+  names(ts)[-1] <- paste0("sim", seq_len(n_series))
+
+  list(time_series = ts, parameters = as.data.frame(pars, check.names = FALSE))
 }
 
 csvgen_fit_growth_one_series <- function(
@@ -3769,7 +3988,7 @@ ui <- fluidPage(
     "))
   ),
 
-  titlePanel("REEBLRA: Interpretable Machine Learning-based Symbolic and Closed-form Polynomial Surrogate Equations for Outbreak Basic Reproduction Number R0 Estimation"),
+  titlePanel("REEBLRA: Interpretable Machine Learning-based Symbolic and Closed-form Surrogate Equations for Outbreak Basic Reproduction Number R0 Estimation"),
   
   tags$div(
     class = "app-header",
@@ -3777,7 +3996,7 @@ ui <- fluidPage(
     tags$h5(style = "color:maroon", "Institute of Mathematical Sciences, UPLB"),
     tags$h6(style = "color:maroon", "*Lead and corresponding author: jfrabajante@up.edu.ph"),
     tags$h4(style = "color:green; font-weight:600;", "R0 Equation Estimation using Bayesian Logistic Regression Algorithm (REEBLRA, pronounced “ree-bra”)"),
-    tags$h4("Deriving a closed-form symbolic basic reproduction number (R0) equation in infectious disease models often involves finding a nonlinear model-specific formula consisting of parameters with arbitrary/unknown values. This process can be complex and time-consuming, especially for high-dimensional or structurally complicated models. REEBLRA is an alternative and interpretable method for finding closed-form surrogate R0 symbolic equation that leverages numerical simulations and machine learning, specifically logistic regression. This approach not only simplifies the calculation of R0 equation (using logit-based polynomial) but also integrates parameter sensitivity analysis into a unified framework, enhancing the efficiency of model analysis."),
+    tags$h4("Deriving a closed-form symbolic basic reproduction number (R0) equation in infectious disease models often involves finding a nonlinear model-specific formula consisting of parameters with arbitrary/unknown values. This process can be complex and time-consuming, especially for high-dimensional or structurally complicated models. REEBLRA is an alternative and interpretable method for finding closed-form polynomial-like surrogate R0 symbolic equation that leverages numerical simulations and machine learning, specifically logistic regression. This approach not only simplifies the calculation of R0 equation (using logit-based polynomial) but also integrates parameter sensitivity analysis into a unified framework, enhancing the efficiency of model analysis."),
     tags$h5(
       style = "color:green;",
       tags$a(
@@ -3788,7 +4007,7 @@ ui <- fluidPage(
         "User Manual"
       )
     ),
-    tags$h5("Important note: REEBLRA does not replace the mechanistic, analytic R0 equation derived from the next-generation matrix or other established mathematical methods. It generates an interpretable, simulation-based symbolic polynomial surrogate for R0 estimation, screening, and exploratory model analysis.")
+    tags$h5("Important note: REEBLRA does not replace the mechanistic, analytic R0 equation derived from the next-generation matrix or other established mathematical methods. It generates an interpretable, simulation-based symbolic polynomial surrogate for R0 estimation, screening, and exploratory model analysis. This Shiny app accompanies the paper: Learning Epidemic Threshold Equations from Simulation: REEBLRA, an Interpretable Bayesian Classification Framework for Reproduction Numbers.")
   ),
 
   sidebarLayout(
@@ -3809,7 +4028,7 @@ ui <- fluidPage(
         selectInput(
           "model_name", "ODE model to simulate",
           choices = c("Closed SIR", "Open SIR", "Open SEIR", "SEIR with vaccination",
-                      "Age-structured SIR", "Vector-borne")
+                      "Age-structured SIR", "15-compartment five-group SIR", "Vector-borne")
         ),
         h5("Parameter ranges for LHS sampling"),
         helpText("You can directly control the minimum and maximum value of every ODE parameter before running simulations."),
@@ -3931,6 +4150,8 @@ gamma = 0.01, 1",
         selected = 0.25
       ),
       helpText("This controls the successive binary thresholds and bracket labels. Examples: 0.25 gives <1, 1-1.25, ...; 0.5 gives <1, 1-1.5, ...; 1 gives <1, 1-2, ... ."),
+      selectInput("feature_basis", "Predictor feature basis", choices = c("Automatic (model-aware)"="auto", "Linear raw parameters"="linear", "Log-linear"="log_linear", "Log-quadratic"="log_quadratic", "Compact log-cubic"="log_cubic_compact"), selected="auto"),
+      helpText("Automatic uses linear terms for the simple SIR examples and a compact log-cubic basis for curved positive-parameter threshold surfaces. Log-based bases require strictly positive predictors. Feature-basis choice is part of the model specification and must be fixed before validation."),
 
       hr(),
       numericInput("chains", "Bayesian chains", value = 2, min = 1, max = 4, step = 1),
@@ -3958,7 +4179,7 @@ gamma = 0.01, 1",
           p("This app estimates an R0-like equation from infectious disease model (e.g., simulation results) or uploaded dataset using Bayesian logistic regression. The goal is to learn a simulation-based epidemic-threshold equation from simulated parameter combinations, then compare it with the known analytic R0/Re formula when available."),
           h4("Main workflow"),
           tags$ol(
-            tags$li(strong("Choose a data source (e.g., an ODE model.)"), " The app currently supports closed SIR, open SIR, open SEIR, SEIR with vaccination, age-structured SIR, vector-borne transmission, custom user-defined ODEs, and uploaded data."),
+            tags$li(strong("Choose a data source (e.g., an ODE model.)"), " The app currently supports Closed SIR, Open SIR, Open SEIR, SEIR with vaccination, Age-structured SIR (two groups), 15-compartment five-group SIR, Vector-borne transmission, custom user-defined ODEs, and uploaded data."),
             tags$li(strong("Simulate many parameter combinations."), " Latin Hypercube Sampling is used to generate parameter sets within the editable ranges."),
             tags$li(strong("Define the R0 target."), " You may classify case increase, analytic R0 > cutoff, or numerical growth-rate R0estimate > cutoff."),
             tags$li(strong("Fit Bayesian logistic regression."), " The fitted equation gives Pr(threshold is true) = logit^{-1}(a + b1*x1 + ... + bp*xp)."),
@@ -3967,7 +4188,7 @@ gamma = 0.01, 1",
           h4("Two R0 concepts in this app"),
           tags$ul(
             tags$li(strong("Threshold R0:"), " asks whether cases increase or whether R0 exceeds a cutoff. This is modeled as a binary classification problem."),
-            tags$li(strong("Growth-rate R0estimate:"), " estimates the early exponential growth rate r from log(I_major(t)) = a + r t while the major susceptible population is still approximately undepleted. The app reports r, 95% CI for r, R-squared, fitting-window size, and warnings. R0estimate is computed from r using the removal rate and, for SEIR-like built-in models, the latency/progression rate. If too few points are available at the selected susceptible threshold, the app relaxes the threshold stepwise to obtain at least 5 positive infectious points when possible. By convention, growth-based R0estimate values below 1 are set to 0 to flag non-growing/subthreshold numerical runs.")
+            tags$li(strong("Growth-rate R0estimate:"), " estimates the early exponential growth rate r from log(I_major(t)) = a + r t while the major susceptible population is still approximately undepleted. The app reports r, 95% CI for r, R-squared, fitting-window size, and warnings. R0estimate is computed from r using the removal rate and, for SEIR-like built-in models, the latency/progression rate. For age/group-structured and vector-borne models this scalar conversion is only a screening approximation and should not be interpreted as an exact next-generation-matrix R0; use the analytic/spectral-radius result when available. If too few points are available at the selected susceptible threshold, the app relaxes the threshold stepwise to obtain at least 5 positive infectious points when possible. By convention, growth-based R0estimate values below 1 are set to 0 to flag non-growing/subthreshold numerical runs.")
           ),
           h4("Analytic formula for selected model"),
           verbatimTextOutput("formula_text"),
@@ -3975,15 +4196,15 @@ gamma = 0.01, 1",
           tags$ul(
             tags$li("If the selected cutoff is 1 and p > 0.5, the model classifies the parameter set as R0 > 1."),
             tags$li("Positive coefficients increase the posterior probability of crossing the threshold; negative coefficients decrease it."),
-            tags$li("Predictors are standardized internally, so coefficients are interpreted on z-scored parameter scales."),
-            tags$li("The equation is an in silico approximation, not a substitute for mechanistic derivation. Its usefulness should be judged by AUC, accuracy, sensitivity, specificity, and agreement with analytic R0 (if available).")
+            tags$li("The selected feature terms are standardized internally within each training set, so coefficients are interpreted on z-scored feature scales; under a linear basis, the feature terms are the original parameters."),
+            tags$li("The equation is an in silico approximation, not a substitute for mechanistic derivation. Its usefulness should be judged by AUC, accuracy, balanced accuracy, sensitivity, specificity, F1 score, and agreement with analytic R0 (if available).")
           ),
           h4("How to read the multiclass ordered-bracket equations"),
           tags$ul(
             tags$li("The multiclass output does not ask only whether R0 exceeds one cutoff. It estimates the likely R0 bracket, such as <1, 1-1.25, 1.25-1.5, and so on, depending on the selected step size."),
             tags$li("The app fits successive binary equations: R0 > 1, R0 > 1 + step, R0 > 1 + 2*step, and so on up to R0 > 10."),
             tags$li("These cumulative probabilities are converted into bracket probabilities. The predicted bracket is the bracket with the largest predicted probability."),
-            tags$li("Multiclass performance should be judged using overall accuracy, weighted averages, class distribution, one-vs-rest AUC, and the confusion matrix. Sparse brackets can have unstable sensitivity and precision even when the overall accuracy is high.")
+            tags$li("Multiclass performance should be judged using overall accuracy, balanced accuracy, Cohen kappa, macro and weighted F1/recall summaries, class distribution, one-vs-rest AUC, and the confusion matrix. Sparse brackets can have unstable sensitivity and precision even when the overall accuracy is high.")
           )
         ),
 
@@ -4044,14 +4265,17 @@ gamma = 0.01, 1",
           tags$ul(
             tags$li("If the selected cutoff is 1 and p > 0.5, the model classifies the parameter set as R0 > 1."),
             tags$li("Positive coefficients increase the posterior probability of crossing the threshold; negative coefficients decrease it."),
-            tags$li("Predictors are standardized internally, so coefficients are interpreted on z-scored parameter scales."),
-            tags$li("The equation is an in silico approximation, not a substitute for mechanistic derivation. Its usefulness should be judged by AUC, accuracy, sensitivity, specificity, and agreement with analytic R0 (if available).")
+            tags$li("The selected feature terms are standardized internally within each training set, so coefficients are interpreted on z-scored feature scales; under a linear basis, the feature terms are the original parameters."),
+            tags$li("The equation is an in silico approximation, not a substitute for mechanistic derivation. Its usefulness should be judged by AUC, accuracy, balanced accuracy, sensitivity, specificity, F1 score, and agreement with analytic R0 (if available).")
           ),
           h4("Estimated equation"),
           verbatimTextOutput("binary_equation"),
           h4("Performance metrics"),
           p("When k >= 2, the table includes k-fold cross-validation metrics from held-out folds, plus apparent/in-sample metrics from the final model fitted to all data."),
           tableOutput("binary_metrics"),
+          h4("Metrics bar graph"),
+          p("All displayed classification metrics use a fixed 0% to 100% vertical scale. Brier score is omitted from this bar graph because lower values are better."),
+          plotlyOutput("binary_metrics_plot", height = "430px"),
           h4("MCMC convergence diagnostics"),
           p("Shown for MCMC sampling. Variational Bayes is approximate and does not have MCMC convergence diagnostics."),
           DTOutput("mcmc_diagnostics"),
@@ -4087,7 +4311,7 @@ gamma = 0.01, 1",
             tags$li("The estimated probabilities Pr(R0 > c) are converted into probabilities for each R0 bracket."),
             tags$li("The predicted R0 bracket is the bracket with the highest converted probability."),
             tags$li("Positive coefficients in a threshold equation increase the probability of being above that specific threshold; negative coefficients decrease it."),
-            tags$li("Judge multiclass usefulness using overall accuracy, weighted averages, class distribution, one-vs-rest AUC, and the confusion matrix. Sparse brackets may have poor sensitivity or precision even when the overall accuracy is acceptable. In that case, increase the sample size or use a larger bracket step.")
+            tags$li("Judge multiclass usefulness using overall accuracy, balanced accuracy, Cohen kappa, macro and weighted F1/recall summaries, class distribution, one-vs-rest AUC, and the confusion matrix. Sparse brackets may have poor sensitivity or precision even when the overall accuracy is acceptable. In that case, increase the sample size or use a larger bracket step.")
           ),
           h4("Model used"),
           verbatimTextOutput("multi_method"),
@@ -4105,6 +4329,9 @@ gamma = 0.01, 1",
           h4("Multiclass accuracy and one-vs-rest metrics"),
           p("When k >= 2, the table includes k-fold cross-validation metrics from held-out folds, plus apparent/in-sample metrics from the final model fitted to all data."),
           tableOutput("multi_metrics"),
+          h4("Metrics bar graph"),
+          p("Overall and macro/weighted summary metrics are shown on a fixed 0% to 100% vertical scale."),
+          plotlyOutput("multi_metrics_plot", height = "470px"),
           h4("Class distribution plot"),
           p("Use this plot to check whether the R0 brackets are too sparse or imbalanced. Very small observed counts usually lead to unstable sensitivity and precision."),
           plotlyOutput("multi_class_distribution_plot", height = "420px"),
@@ -4125,10 +4352,10 @@ gamma = 0.01, 1",
 
         tabPanel(
           "Parameter sensitivity analysis",
-          h3("Normalized Bayesian sensitivity coefficients"),
-          p("Aim: this tab summarizes which parameters most strongly influence the fitted probability of crossing the selected R0 threshold in the binary Bayesian logistic model."),
-          p("The app first fits the binary Bayesian logistic equation using standardized predictors. For each posterior draw of each standardized coefficient b, it computes a normalized Bayesian sensitivity coefficient s = tanh(b). This transformation maps any real-valued coefficient to the interval (-1, 1), making effects easier to compare across parameters."),
-          p("Interpretation: positive values mean the parameter tends to increase the probability of crossing the selected threshold; negative values mean the parameter tends to decrease that probability. Values near 0 indicate weak model-based influence, while values near -1 or +1 indicate stronger negative or positive influence. The table and plot report the posterior median and 95% credible interval of the transformed coefficient."),
+          h3("Normalized Bayesian feature-term sensitivity coefficients"),
+          p("Aim: this tab summarizes which fitted feature terms most strongly influence the probability of crossing the selected R0 threshold. Under the linear basis, these feature terms are the original parameters; under log/quadratic/cubic bases, they include transformed terms."),
+          p("For each posterior draw of each standardized coefficient b, the app computes s = tanh(b), mapping the real line to (-1, 1) for comparison across fitted terms."),
+          p("Interpretation: positive values increase the fitted probability of crossing the threshold and negative values decrease it, conditional on the other fitted terms. With transformed bases, this is a feature-term sensitivity summary rather than a one-number mechanistic sensitivity for the raw parameter. The table and plot report posterior median and 95% credible interval."),
           plotlyOutput("sensitivity_plot", height = "520px"),
           h4("Sensitivity table"),
           DTOutput("sensitivity_table")
@@ -4149,6 +4376,10 @@ gamma = 0.01, 1",
               h4("1. Upload input files"),
               fileInput("csvgen_ts_file", "Time-series file (.csv, .txt, .tsv)", accept = c(".csv", ".txt", ".tsv")),
               fileInput("csvgen_par_file", "Parameter-combination file (.csv, .txt, .tsv)", accept = c(".csv", ".txt", ".tsv")),
+              h5("Synthetic template files"),
+              downloadButton("csvgen_download_template_ts", "Download time-series template"),
+              br(), br(),
+              downloadButton("csvgen_download_template_par", "Download parameter template"),
               hr(),
               h4("2. Early-growth window"),
               selectInput(
@@ -4364,6 +4595,8 @@ server <- function(input, output, session) {
   sim_data <- reactiveVal(NULL)
   binary_fit <- reactiveVal(NULL)
   multi_fit <- reactiveVal(NULL)
+  upload_staged_raw <- reactiveVal(NULL)
+  upload_staged_source <- reactiveVal(NULL)
 
   data_ready_message <- reactive({
     if (identical(input$data_mode, "upload")) {
@@ -4401,6 +4634,32 @@ server <- function(input, output, session) {
   # -----------------------------
   # CSV generator tab server
   # -----------------------------
+  output$csvgen_download_template_ts <- downloadHandler(
+    filename = function() "REEBLRA_template_schistosomiasis_50_time_series.csv",
+    content = function(file) {
+      template <- csvgen_schisto_template_data()
+      readr::write_csv(template$time_series, file)
+    }
+  )
+
+  output$csvgen_download_template_par <- downloadHandler(
+    filename = function() "REEBLRA_template_schistosomiasis_20_parameters.csv",
+    content = function(file) {
+      template <- csvgen_schisto_template_data()
+      readr::write_csv(template$parameters, file)
+    }
+  )
+
+  # If the user selects a new ordinary REEBLRA upload file after having staged a
+  # CSV Generator result, the newly selected physical file becomes authoritative.
+  observeEvent(input$upload_r0_file, {
+    upload_staged_raw(NULL)
+    upload_staged_source("uploaded_file")
+    sim_data(NULL)
+    binary_fit(NULL)
+    multi_fit(NULL)
+  }, ignoreInit = TRUE)
+
   csvgen_ts_data <- reactive({
     req(input$csvgen_ts_file)
     csvgen_read_uploaded_table(input$csvgen_ts_file)
@@ -4534,24 +4793,37 @@ server <- function(input, output, session) {
 
   observeEvent(input$csvgen_use_in_app, {
     req(csvgen_generated())
-    df <- csvgen_generated()$output_csv
+    raw_df <- as.data.frame(csvgen_generated()$output_csv, check.names = FALSE)
+
+    df <- tryCatch({
+      prepare_uploaded_r0_dataframe(
+        df = raw_df,
+        r0_col = "R0estimate",
+        max_params = 50,
+        bracket_step = as.numeric(input$multiclass_step)
+      )
+    }, error = function(e) {
+      showNotification(paste("CSV Generator handoff error:", e$message), type = "error", duration = 12)
+      NULL
+    })
+    req(df)
+
     df <- df %>%
       dplyr::mutate(
-        R0estimate = suppressWarnings(as.numeric(R0estimate)),
-        analytic_R0 = NA_real_,
-        numeric_secondary_R0 = R0estimate,
-        cases_increase = as.integer(R0estimate > 1),
-        max_I = NA_real_,
-        final_size = NA_real_,
         threshold_binary = as.integer(R0estimate > input$r0_cutoff),
-        R0_bracket_analytic = NA,
         R0_bracket_numeric = make_r0_brackets(R0estimate, step = as.numeric(input$multiclass_step))
       )
+
+    # Stage the clean generated upload in memory. This prevents the upload-mode
+    # loader from requiring a second physical file upload and avoids a reactive
+    # loop/inconsistent state after switching data_mode to "upload".
+    upload_staged_raw(raw_df)
+    upload_staged_source("csv_generator")
     sim_data(df)
     binary_fit(NULL)
     multi_fit(NULL)
     updateRadioButtons(session, "data_mode", selected = "upload")
-    showNotification("Generated CSV is now loaded as the active uploaded REEBLRA dataset. You can fit the binary or multiclass model.", type = "message", duration = 8)
+    showNotification("Generated CSV is now loaded as the active uploaded REEBLRA dataset. You can fit the binary or multiclass model directly; re-uploading the generated CSV is not required.", type = "message", duration = 8)
   })
 
   output$csvgen_download_csv <- downloadHandler(
@@ -4609,17 +4881,22 @@ server <- function(input, output, session) {
   })
 
   uploaded_raw <- reactive({
+    staged <- upload_staged_raw()
+    if (!is.null(staged)) {
+      return(tibble::as_tibble(staged, .name_repair = "minimal"))
+    }
     req(input$upload_r0_file)
     readr::read_csv(input$upload_r0_file$datapath, show_col_types = FALSE)
   })
 
   output$upload_column_controls <- renderUI({
-    req(input$upload_r0_file)
     df <- uploaded_raw()
-    num_cols <- names(df)[sapply(df, is.numeric)]
+    req(is.data.frame(df), ncol(df) >= 1)
+    num_cols <- names(df)[vapply(df, is.numeric, logical(1))]
+    selected_r0 <- if ("R0estimate" %in% names(df)) "R0estimate" else names(df)[1]
     tagList(
-      selectInput("upload_r0_col", "R0 estimate column", choices = names(df), selected = if ("R0estimate" %in% names(df)) "R0estimate" else names(df)[1]),
-      helpText(paste0("Detected ", length(setdiff(num_cols, input$upload_r0_col)), " numeric candidate parameter columns. Keep this at <= 50 for stable fitting and interpretation."))
+      selectInput("upload_r0_col", "R0 estimate column", choices = names(df), selected = selected_r0),
+      helpText(paste0("Detected ", length(setdiff(num_cols, selected_r0)), " numeric candidate parameter columns. Keep this at <= 50 for stable fitting and interpretation."))
     )
   })
 
@@ -4825,10 +5102,29 @@ server <- function(input, output, session) {
     set.seed(input$seed)
 
     if (identical(input$data_mode, "upload")) {
-      req(input$upload_r0_file)
-      r0_col <- if (!is.null(input$upload_r0_col)) input$upload_r0_col else "R0estimate"
+      staged <- upload_staged_raw()
+      r0_col <- if (!is.null(input$upload_r0_col) && nzchar(input$upload_r0_col)) input$upload_r0_col else "R0estimate"
+
       df <- tryCatch({
-        prepare_uploaded_r0_data(input$upload_r0_file$datapath, r0_col = r0_col, max_params = 50, bracket_step = as.numeric(input$multiclass_step))
+        if (!is.null(staged)) {
+          # CSV Generator handoff: load the in-memory table directly. No second
+          # file upload is required after clicking "Use generated CSV in REEBLRA app".
+          if (!r0_col %in% names(staged) && "R0estimate" %in% names(staged)) r0_col <- "R0estimate"
+          prepare_uploaded_r0_dataframe(
+            staged,
+            r0_col = r0_col,
+            max_params = 50,
+            bracket_step = as.numeric(input$multiclass_step)
+          )
+        } else {
+          req(input$upload_r0_file)
+          prepare_uploaded_r0_data(
+            input$upload_r0_file$datapath,
+            r0_col = r0_col,
+            max_params = 50,
+            bracket_step = as.numeric(input$multiclass_step)
+          )
+        }
       }, error = function(e) {
         showNotification(paste("Upload error:", e$message), type = "error", duration = 12)
         NULL
@@ -4839,7 +5135,13 @@ server <- function(input, output, session) {
           threshold_binary = as.integer(R0estimate > input$r0_cutoff),
           R0_bracket_numeric = make_r0_brackets(R0estimate, step = as.numeric(input$multiclass_step))
         )
-      showNotification("Uploaded R0estimate table loaded and prepared.", type = "message", duration = 5)
+      showNotification(
+        if (identical(upload_staged_source(), "csv_generator"))
+          "CSV Generator result loaded and prepared for REEBLRA fitting."
+        else
+          "Uploaded R0estimate table loaded and prepared.",
+        type = "message", duration = 5
+      )
     } else if (identical(input$data_mode, "custom_ode")) {
       custom_inputs <- tryCatch(custom_model_inputs(), error = function(e) {
         showNotification(paste("Custom ODE input error:", e$message), type = "error", duration = 12)
@@ -4957,12 +5259,13 @@ server <- function(input, output, session) {
     if (identical(input$data_mode, "upload") || identical(input$data_mode, "custom_ode")) {
       df <- sim_with_current_threshold()
       if (is.null(df)) return(character(0))
-      setdiff(names(df), c(
+      candidates <- setdiff(names(df), c(
         "R0estimate", "analytic_R0", "numeric_secondary_R0", "cases_increase", "max_I", "final_size",
         "early_growth_r", "early_growth_r_lwr95", "early_growth_r_upr95", "early_growth_R2",
         "early_growth_n", "early_growth_threshold_used", "early_growth_window_end", "early_growth_valid", "early_growth_warning",
         "R0_bracket_analytic", "R0_bracket_numeric", "threshold_binary"
       ))
+      candidates[vapply(df[candidates], is.numeric, logical(1))]
     } else {
       current_param_ranges()$parameter
     }
@@ -5085,7 +5388,8 @@ server <- function(input, output, session) {
           iter = input$iter,
           seed = input$seed,
           algorithm = input$stan_algorithm,
-          k_folds = input$k_folds
+          k_folds = input$k_folds,
+          feature_basis = resolve_feature_basis(input$feature_basis, if (identical(input$data_mode, "ode")) input$model_name else NULL)
         )
       })
     }, error = function(e) {
@@ -5111,16 +5415,16 @@ server <- function(input, output, session) {
       "K-fold validation setting:", fit$k_folds, "\n",
       "Model formula used internally:", formula_text, "\n\n",
       "Why the equation may be long:\n",
-      "If the uploaded dataset has many numeric parameters, REEBLRA fits all selected numeric predictors together. Long equations can look visually overwhelming, especially on the original scale. The standardized equation is usually easier to interpret because each coefficient is comparable across parameters.\n\n",
+      "If the dataset has many numeric parameters or a transformed basis, REEBLRA fits all selected feature terms together. Long equations can look visually overwhelming on the unstandardized feature scale. The standardized equation is usually easier to compare term-by-term.\n\n",
       "TOP STANDARDIZED TERMS BY ABSOLUTE POSTERIOR MEAN:\n",
       top_binary_terms_text(fit, top_n = 10), "\n\n",
       "STANDARDIZED VERSION USED FOR FITTING:\n",
-      "Predictors are standardized internally: z_parameter = (parameter - mean) / sd.\n",
+      "Feature terms are standardized internally within the training data: z_feature = (feature - mean) / sd.\n",
       collapse_long_equation(eq$logit_standardized), "\n",
       collapse_long_equation(eq$probability_standardized), "\n",
       collapse_long_equation(eq$threshold_standardized), "\n\n",
-      "ORIGINAL-SCALE EQUATION:\n",
-      "This is mathematically useful for direct substitution, but coefficients can look very large when parameters have very small scales or very different units. Prefer the standardized equation and coefficient table for interpretation.\n",
+      "UNSTANDARDIZED FEATURE-SCALE EQUATION:\n",
+      "For transformed bases, terms such as log__, log2__, log3__, and logx__ denote log-parameter main effects, powers, and pairwise interactions. This equation is directly evaluable after applying the declared feature transformation. Coefficients can look large when feature scales differ. Prefer the standardized equation and coefficient table for interpretation.\n",
       collapse_long_equation(eq$logit_original), "\n",
       collapse_long_equation(eq$probability_original), "\n",
       collapse_long_equation(eq$threshold_original), "\n\n",
@@ -5133,6 +5437,19 @@ server <- function(input, output, session) {
     binary_fit()$metrics
   })
 
+  output$binary_metrics_plot <- renderPlotly({
+    if (is.null(binary_fit())) return(note_plotly(binary_ready_message()))
+    d <- binary_fit()$metrics %>%
+      dplyr::filter(Metric %in% c("Accuracy", "Balanced accuracy", "AUC", "Sensitivity", "Specificity", "Precision", "F1 score", "NPV", "Cohen kappa"), is.finite(Value)) %>%
+      dplyr::mutate(Percent = 100 * Value,
+                    hover_text = paste0(Validation, "<br>", Metric, " = ", round(Percent, 2), "%"))
+    plot_ly(d, x = ~Metric, y = ~Percent, color = ~Validation, type = "bar",
+            text = ~hover_text, hoverinfo = "text") %>%
+      layout(barmode = "group", title = "Binary classification metrics",
+             xaxis = list(title = "", tickangle = -35),
+             yaxis = list(title = "Metric", range = c(0, 100), ticksuffix = "%"))
+  })
+
   output$mcmc_diagnostics <- renderDT({
     if (is.null(binary_fit())) return(DT::datatable(note_table(binary_ready_message()), rownames = FALSE, options = list(dom = "t")))
     DT::datatable(mcmc_diagnostics_table(binary_fit()), options = list(scrollX = TRUE, pageLength = 100))
@@ -5141,7 +5458,7 @@ server <- function(input, output, session) {
   output$binary_trial_inputs <- renderUI({
     if (is.null(binary_fit())) return(helpText(binary_ready_message()))
     bf <- binary_fit()
-    defaults <- if (!is.null(bf$centers)) bf$centers else NULL
+    defaults <- if (!is.null(bf$raw_centers)) bf$raw_centers else NULL
     make_trial_inputs("binary_trial_", bf$predictors, defaults)
   })
 
@@ -5292,7 +5609,7 @@ server <- function(input, output, session) {
       "ORDINARY LOGISTIC REGRESSION ON STANDARDIZED PREDICTORS:\n",
       collapse_long_equation(eq$eta_standardized), "\n",
       collapse_long_equation(eq$probability_standardized), "\n\n",
-      "ORDINARY LOGISTIC REGRESSION ON ORIGINAL PARAMETER SCALE:\n",
+      if (identical(bf$feature_basis, "linear")) "ORDINARY LOGISTIC REGRESSION ON ORIGINAL PARAMETER SCALE:\n" else "ORDINARY LOGISTIC REGRESSION ON UNSTANDARDIZED FITTED-FEATURE SCALE:\n",
       collapse_long_equation(eq$eta_original), "\n",
       collapse_long_equation(eq$probability_original), "\n\n",
       "Classification rule: p > 0.5 is equivalent to eta > 0."
@@ -5326,7 +5643,8 @@ server <- function(input, output, session) {
           outcome_class = if (identical(input$data_mode, "upload") || identical(input$data_mode, "custom_ode")) "R0_bracket_numeric" else input$multiclass_source,
           bracket_step = as.numeric(input$multiclass_step),
           seed = input$seed,
-          k_folds = input$k_folds
+          k_folds = input$k_folds,
+          feature_basis = resolve_feature_basis(input$feature_basis, if (identical(input$data_mode, "ode")) input$model_name else NULL)
         )
       })
     }, error = function(e) {
@@ -5345,7 +5663,7 @@ server <- function(input, output, session) {
     paste(
       multi_fit()$method,
       "\nOutcome:", multi_fit()$outcome_class,
-      "\nPredictors are standardized internally.",
+      "\nFeature basis:", multi_fit()$feature_basis, "(feature terms are standardized within training data).",
       "\nK-fold validation setting:", multi_fit()$k_folds,
       "\nObserved R0estimate range used for fitting:",
       paste0(
@@ -5391,7 +5709,7 @@ server <- function(input, output, session) {
       ygap = 1,
       text = ~paste0(
         "R0 level: ", R0_level,
-        "<br>Parameter: ", Parameter,
+        "<br>Feature term: ", Parameter,
         "<br>Standardized coefficient: ", ifelse(is.finite(Estimate), round(Estimate, 6), "not estimable"),
         "<br>Row-normalized coefficient: ", ifelse(is.finite(Row_normalized), round(Row_normalized, 6), "not estimable"),
         "<br>N at or below threshold: ", N_at_or_below,
@@ -5403,7 +5721,7 @@ server <- function(input, output, session) {
     ) %>%
       layout(
         title = "Standardized coefficient matrix across successive R0 thresholds",
-        xaxis = list(title = "Parameter", tickangle = -45),
+        xaxis = list(title = "Feature term", tickangle = -45),
         yaxis = list(
           title = "R0 threshold level",
           categoryorder = "array",
@@ -5421,7 +5739,7 @@ server <- function(input, output, session) {
   output$multi_trial_inputs <- renderUI({
     if (is.null(multi_fit())) return(helpText(multi_ready_message()))
     mf <- multi_fit()
-    defaults <- if (!is.null(mf$centers)) mf$centers else NULL
+    defaults <- if (!is.null(mf$raw_centers)) mf$raw_centers else NULL
     make_trial_inputs("multi_trial_", mf$predictors, defaults)
   })
 
@@ -5449,6 +5767,23 @@ server <- function(input, output, session) {
   output$multi_metrics <- renderTable({
     if (is.null(multi_fit())) return(note_table(multi_ready_message()))
     multiclass_metrics(multi_fit())
+  })
+
+  output$multi_metrics_plot <- renderPlotly({
+    if (is.null(multi_fit())) return(note_plotly(multi_ready_message()))
+    d <- multiclass_metrics(multi_fit()) %>%
+      dplyr::filter(
+        Class %in% c("Overall", "Macro average", "Weighted average"),
+        Metric %in% c("Accuracy", "Balanced accuracy", "Cohen kappa", "Sensitivity", "Specificity", "Precision", "Recall", "F1 score", "NPV", "Balanced accuracy (one-vs-rest)") ,
+        is.finite(Value)
+      ) %>%
+      dplyr::mutate(Series = paste(Validation, Class, sep = " - "), Percent = 100 * Value,
+                    hover_text = paste0(Series, "<br>", Metric, " = ", round(Percent, 2), "%"))
+    plot_ly(d, x = ~Metric, y = ~Percent, color = ~Series, type = "bar",
+            text = ~hover_text, hoverinfo = "text") %>%
+      layout(barmode = "group", title = "Ordered-bracket summary metrics",
+             xaxis = list(title = "", tickangle = -35),
+             yaxis = list(title = "Metric", range = c(0, 100), ticksuffix = "%"))
   })
 
   output$multi_class_distribution_plot <- renderPlotly({
@@ -5517,7 +5852,7 @@ server <- function(input, output, session) {
       layout(
         title = "One-vs-rest AUC per R0 bracket",
         xaxis = list(title = "R0 bracket", tickangle = -45),
-        yaxis = list(title = "One-vs-rest AUC", range = c(0, 1)),
+        yaxis = list(title = "One-vs-rest AUC", range = c(0, 1), tickformat = ".0%"),
         shapes = list(
           list(
             type = "line",
@@ -5561,7 +5896,7 @@ server <- function(input, output, session) {
       layout(
         title = "K-fold one-vs-rest AUC per R0 bracket",
         xaxis = list(title = "R0 bracket", tickangle = -45),
-        yaxis = list(title = "K-fold one-vs-rest AUC", range = c(0, 1)),
+        yaxis = list(title = "K-fold one-vs-rest AUC", range = c(0, 1), tickformat = ".0%"),
         shapes = list(
           list(
             type = "line",
@@ -5770,7 +6105,7 @@ server <- function(input, output, session) {
         arrayminus = ~pmax(0, Normalized_Bayesian_sensitivity_coefficient_median - Normalized_Bayesian_sensitivity_coefficient_lwr95)
       ),
       text = ~paste0(
-        "Parameter = ", Parameter,
+        "Feature term = ", Parameter,
         "<br>Median normalized coefficient = ", round(Normalized_Bayesian_sensitivity_coefficient_median, 5),
         "<br>95% CrI = [", round(Normalized_Bayesian_sensitivity_coefficient_lwr95, 5), ", ", round(Normalized_Bayesian_sensitivity_coefficient_upr95, 5), "]",
         "<br>Mean normalized coefficient = ", round(Normalized_Bayesian_sensitivity_coefficient_mean, 5),
@@ -5779,8 +6114,8 @@ server <- function(input, output, session) {
       hoverinfo = "text"
     ) %>%
       layout(
-        title = "Normalized Bayesian sensitivity coefficient",
-        xaxis = list(title = "Median normalized Bayesian sensitivity coefficient", range = c(-1, 1), zeroline = TRUE),
+        title = "Normalized Bayesian feature-term sensitivity coefficient",
+        xaxis = list(title = "Median normalized Bayesian feature-term coefficient", range = c(-1, 1), zeroline = TRUE),
         yaxis = list(title = "")
       )
   })
